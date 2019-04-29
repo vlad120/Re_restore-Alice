@@ -1,26 +1,30 @@
 """
-    Version 1.0.0 (29.04.2019)
+    Version 1.0.1 (29.04.2019)
     Mironov Vladislav
 """
 
 from flask import Flask, request
-from requests import get, post, put, delete
+from requests import get, post, delete
 from random import choice, randint
 import logging
 import json
-
-
-class ApiError(Exception):
-    pass
-
 
 # logging.basicConfig(filename='my_logs.log', level=logging.INFO,
 #                     format='%(asctime)s %(levelname)s %(message)s')
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 app = Flask(__name__)
-
 sessionStorage = {}
+
+# SHOP_URL = "https://re_restore.ru/"
+# SHOP_URL = "http://127.0.0.1:8080/"
+SHOP_URL = "https://neo120.pythonanywhere.com/"
+
+WAITING = 'waiting'
+
+
+class ApiError(Exception):
+    pass
 
 
 @app.route('/alice_main', methods=['POST'])
@@ -66,7 +70,7 @@ def handle_dialog(req, res, user_id):
     state = session['state']
 
     # желание окончить сессию (прощание)
-    if (state == 'waiting' and find_command(answer, "нет", "позже", "потом", "не хочу")) or \
+    if (state == WAITING and find_command(answer, "нет", "позже", "потом", "не хочу")) or \
             (not state and find_command(answer, "пока", "до свидания", "уйди", "отстань")):
         res['response']['text'] = 'Если что, обращайтесь!'
         res['response']['end_session'] = True
@@ -76,7 +80,7 @@ def handle_dialog(req, res, user_id):
     if state:
         # ситуация, когда на вопрос типа "Могу чем-то помочь?"
         # пользователь отвечает согласием
-        if state == 'waiting':
+        if state == WAITING:
             if check_agree(answer):
                 res['response']['text'] = 'Давайте поконкретнее.'
                 session['state'] = None
@@ -90,7 +94,7 @@ def handle_dialog(req, res, user_id):
                 session['state'] = 'authorization_waiting'
             elif check_cancel(answer):
                 res['response']['text'] = 'Ладно, {}'.format(can_help())
-                session['state'] = 'waiting'
+                session['state'] = WAITING
             else:
                 res['response']['text'] = 'Пожалуйста, говорите конкретнее.'
             return
@@ -117,7 +121,7 @@ def handle_dialog(req, res, user_id):
                     # проверка на отмену
                     if check_cancel(answer):
                         res['response']['text'] = 'Ладно, {}'.format(can_help())
-                        session['state'] = 'waiting'
+                        session['state'] = WAITING
                         return
                     res['response']['text'] = 'Неверный формат! Я же сказал, ' \
                                               'нужно ввести логин и пароль через пробел. Давайте заново.'
@@ -126,7 +130,7 @@ def handle_dialog(req, res, user_id):
             return
 
         # после показа товара
-        elif state == "goods_showed":
+        elif state == 'goods_showed':
             # если хочет ещё
             if find_command(answer, "ещё", "еще"):
                 answer = "что бы купить"
@@ -138,11 +142,11 @@ def handle_dialog(req, res, user_id):
                 return
 
         # при добавлении товара в корзину
-        elif state == "adding_to_basket":
+        elif state == 'adding_to_basket':
             # при отмене
             if check_cancel(answer):
-                res['response']['text'] = 'Ну, как хотите, не будем добавлять. Может, что-нибудь ещё?'
-                session['state'] = 'waiting'
+                res['response']['text'] = 'Ну, как хотите, не будем добавлять. {}'.format(can_help())
+                session['state'] = WAITING
                 return
             # поиск числа в ответе
             for entity in req['request']['nlu']['entities']:
@@ -155,7 +159,7 @@ def handle_dialog(req, res, user_id):
                         # при успешном добавлении
                         if api_resp['success']:
                             res['response']['text'] = 'Добавил. {}'.format(can_help())
-                            session['state'] = 'waiting'
+                            session['state'] = WAITING
                             return
                         # товара недостаточно
                         elif api_resp['message'] == "Count is more then original":
@@ -172,7 +176,35 @@ def handle_dialog(req, res, user_id):
                         make_unknown_error(e, res, session)
                         return
             # при отсутсвии числа
-            res['response']['text'] = 'Не понял, сколько?'
+            res['response']['text'] = choice(['Не понял, сколько?',
+                                              'Сколько?',
+                                              'Говорите конкретнее.'])
+            return
+
+        # при удалении товара из корзины
+        elif state == 'removing_goods_from_basket':
+            # при отмене
+            if check_cancel(answer):
+                res['response']['text'] = 'Как Вам угодно – пока оставим. {}'.format(can_help())
+                session['state'] = WAITING
+                return
+            # согласие
+            if check_agree(answer):
+                try:
+                    api_resp = get_shop_api_response('api/basket/{}'.format(session['state_value']),
+                                                     delete, data=session['authorization'])
+                    if api_resp['success']:
+                        res['response']['text'] = 'Удалил. {}'.format(can_help())
+                        session['state'] = WAITING
+                    else:
+                        res['response']['text'] = 'В корзине товар №{} не найден...'.format(can_help())
+                        session['state'] = None
+                except Exception as e:
+                    make_unknown_error(e, res, session)
+                return
+            res['response']['text'] = choice(['Так будем удалять, или нет?',
+                                              'Не понял, удаляем?',
+                                              'Говорите конретнее.'])
             return
 
         # подтверждение заказа
@@ -187,7 +219,7 @@ def handle_dialog(req, res, user_id):
                         res['response']['text'] = "Заказ №{} был создан. В течение некоторого времени " \
                                                   "с Вами свяжется наш менеджер для подтверждения. " \
                                                   "Что-нибудь ещё желаете?".format(api_resp['order_id'])
-                        session['state'] = 'waiting'
+                        session['state'] = WAITING
                     else:
                         raise ApiError
                 except Exception as e:
@@ -195,7 +227,7 @@ def handle_dialog(req, res, user_id):
             # при отрицании
             elif check_cancel(answer):
                 res['response']['text'] = "Хорошо, пока отложим заказ на потом. {}".format(can_help())
-                session['state'] = 'waiting'
+                session['state'] = WAITING
             # непонятная фраза
             else:
                 res['response']['text'] = "Говорите, пожалуйста, понятнее."
@@ -205,9 +237,10 @@ def handle_dialog(req, res, user_id):
     if find_command(answer, special='what_can'):
         res['response']['text'] = ("Я - бот-помощник онлайн магазина Re_restore. "
                                    "Я могу многое. Вот перечень моих услуг:\n"
-                                   "  $ Поиск товаров (по названию/описанию)\n"
+                                   "  $ Поиск товаров (по названию/описанию/артиклу)\n"
                                    "  $ Авторизация\n"
                                    "  $ Добавление товаров в корзину\n"
+                                   "  $ Удаление товаров из корзины\n"
                                    "  $ Просмотр корзины\n"
                                    "  $ Создание заказов\n"
                                    "  $ Просмотр заказов")
@@ -217,13 +250,30 @@ def handle_dialog(req, res, user_id):
     # желание авторизироваться
     if find_command(answer, special='authorization_wish'):
         if session['authorization']:
-            res['response']['text'] = 'Вы уже авторизированы как "{}"'.format(
+            res['response']['text'] = choice(['Вы уже авторизированы как **{}**.',
+                                              '**{}**, не знаете случайно, откуда я вас знаю?...',
+                                              '**{}**, мы не знакомы?']).format(
                 session['authorization']['login']
             )
+            session['state'] = WAITING
             return
         res['response']['text'] = 'Ок, для входа в личный кабинет введите с ' \
                                   'клавиатуры свой логин и пароль через пробел.'
         session['state'] = 'authorization_waiting'
+        return
+
+    # желание деавторизироваться
+    if find_command(answer, special='de_authorization_wish'):
+        if session['authorization']:
+            session['authorization'] = None
+            res['response']['text'] = 'Хорошо, Вы вышли из аккаунта. {}'.format(can_help())
+            session['state'] = WAITING
+        else:
+            res['response']['text'] = choice['Но вы и не авторизированы ;)',
+                                             'А вы сначала авторизируйтесь ;)',
+                                             'Для начала, Вам нужно войти в личный кабинет ;)',
+                                             'Но вы ведь не авторизированы ;)']
+            session['state'] = None
         return
 
     # просмотр 1 интересного (случайного) товара
@@ -348,6 +398,32 @@ def handle_dialog(req, res, user_id):
                 make_unknown_error(e, res, session)
         return
 
+    # запрос на удаление товара из корзины
+    result = find_command(answer, special='remove_goods_from_basket_ask')
+    if result:
+        try:
+            last = result.split()[-1]
+            data = {'text': answer[answer.index(last) + len(last):]}  # выделяем часть после фразы запроса
+
+            api_resp = get_shop_api_response('api/search/auto', get, data=data)
+            if api_resp['success']:
+                goods = api_resp['goods']  # найденные товары
+                if goods:
+                    goods = goods[0]
+                    res['response']['text'] = 'Вы хотите удалить товар №{} ({})?'.format(goods['id'],
+                                                                                         goods['name'])
+                    session['state'] = 'removing_goods_from_basket'
+                    session['state_value'] = goods['id']
+                else:
+                    res['response']['text'] = "Такого товара, скорее всего, не существует. " \
+                                              "Говорите конкретнее".format(result)
+                    session['state'] = None
+            else:
+                raise ApiError
+        except Exception as e:
+            make_unknown_error(e, res, session)
+        return
+
     # поиск товара
     result = find_command(answer, special='search_goods')
     if result:
@@ -380,7 +456,7 @@ def handle_dialog(req, res, user_id):
                         "payload": {}
                     }
                 }
-                session['state'] = "goods_showed"
+                session['state'] = 'goods_showed'
                 session['state_value'] = goods['id']
             else:
                 raise ApiError
@@ -388,7 +464,10 @@ def handle_dialog(req, res, user_id):
             make_unknown_error(e, res, session)
         return
 
-    res['response']['text'] = 'Извинете, не расслышал. О чём это вы?'
+    res['response']['text'] = choice(['Извинете, не расслышал. О чём это вы?',
+                                      'Не расслышал, что?',
+                                      'Не знаю, о чём Вы...',
+                                      'Я вас не понимать.'])
     res['response']['buttons'] = get_suggests(user_id)
 
 
@@ -406,7 +485,7 @@ def get_suggests(user_id):
         session = sessionStorage[user_id]
         state = session['state']
 
-        if not state or state == 'waiting':
+        if not state or state == WAITING:
             return make_suggests(choose_suggests(get_base_variants()))
 
         if state == 'goods_showed':
@@ -452,9 +531,14 @@ def find_command(text, *commands, special=None):
             ]
         elif special == 'authorization_wish':
             commands = [
-                "хочу войти в лк", "войди в лк", "хочу войти в личный кабинет",
-                "войди в личный кабинет", "хочу авторизироваться", "авторизируй меня",
+                "войти в лк", "войди в лк", "войти в личный кабинет",
+                "войди в личный кабинет", "авторизироваться", "авторизируй меня",
                 "давай войдем в личный кабине"
+            ]
+        elif special == 'de_authorization_wish':
+            commands = [
+                "деавторизируй меня", "выйди из личного кабинета", "выйди из лк",
+                "выйти из личного кабинета", "выйти из лк",
             ]
         elif special == 'interesting_goods':
             commands = [
@@ -483,32 +567,38 @@ def find_command(text, *commands, special=None):
                 "какие у меня заказы", "мои заказы", "покажи заказы",
                 "у меня есть заказы"
             ]
+        elif special == 'remove_goods_from_basket_ask':
+            commands = [
+                "удали из корзины", "убери с корзины", "убери из корзины"
+                "удали из корзины товар", "убери с корзины товар", "убери из корзины товар",
+                "удали товар"
+            ]
         elif special == 'search_goods':
             if ' не' not in ' ' + text:
                 if "найди" in text[:20]:
-                    # возвращаем текст запроса, начаниющийся после слова "найди"
-                    return text[text.index("найди") + 5:]
+                    # возвращаем текст запроса, начаниющийся после найденного слова
+                    return text[text.index("найди") + 5:].strip()
                 elif "найти" in text:
-                    return text[text.index("найти") + 5:]
+                    return text[text.index("найти") + 5:].strip()
                 elif "поищи" in text[:20]:
-                    return text[text.index("поищи") + 5:]
+                    return text[text.index("поищи") + 5:].strip()
                 elif "поискать" in text:
-                    return text[text.index("поискать") + 8:]
+                    return text[text.index("поискать") + 8:].strip()
             return False
 
     text_set = {word.strip('.?,!"') for word in text.split()}
 
     for command in commands:
-        len_diff = len(text) - len(command)
-        if len_diff > 10:
+        if len(text) - len(command) > 10:
             continue
         no_in_text = ' не' in ' ' + text
         no_in_command = ' не' in ' ' + text
         if no_in_text and not no_in_command:
             continue
-        command = set(command.split())
-        if command & text_set == command:
-            return True
+        command_set = set(command.split())
+        # если все слова из команды есть в переданном тексте
+        if command_set & text_set == command_set:
+            return command  # команда найдена
     return False
 
 
@@ -538,7 +628,7 @@ def make_unknown_error(error, res, session):
                 "Может, что-нибудь ещё?"]
     message = choice(messages)
     res['response']['text'] = message[0]
-    session['state'] = 'waiting'
+    session['state'] = WAITING
 
 
 # проверка авторизиции пользователя и, в противном случае, подготовка ответа
@@ -578,11 +668,6 @@ def get_goods_list(basket):
 # получение ответа от API магазина
 def get_shop_api_response(url, method, data=dict()):
     return method(SHOP_URL + url.strip('/'), params=data).json()
-
-
-# SHOP_URL = "https://re_restore.ru/"
-# SHOP_URL = "http://127.0.0.1:8080/"
-SHOP_URL = "https://neo120.pythonanywhere.com/"
 
 
 if __name__ == '__main__':
