@@ -286,7 +286,7 @@ def handle_dialog(req, res, user_id):
         session['state'] = None
         return
 
-    # желание авторизироваться
+    # желание авторизироваться (к черту безопасность!)
     if find_command(answer, special='authorization_wish'):
         if session['authorization']:
             res['response']['text'] = choice(['Вы уже авторизированы как **{}**.',
