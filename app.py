@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 app = Flask(__name__)
 sessionStorage = {}
 
-# SHOP_URL = "https://re_restore.ru/"
+# SHOP_URL = "https://new_store.ru/"
 # SHOP_URL = "http://127.0.0.1:8080/"
 SHOP_URL = "https://neo120.pythonanywhere.com/"
 
@@ -57,7 +57,7 @@ def handle_dialog(req, res, user_id):
             'state': None,
             'state_value': None
         }
-        res['response']['text'] = 'Здравствуйте! Чем могу помочь?'
+        res['response']['text'] = 'Здравствуйте! Я — бот магазина NewStore. Чем могу помочь?'
         return
 
     answer = req['request']['original_utterance'].lower()
@@ -274,8 +274,7 @@ def handle_dialog(req, res, user_id):
 
     # что умею
     if find_command(answer, special='what_can'):
-        res['response']['text'] = ("Я - бот-помощник онлайн магазина Re_restore. "
-                                   "Я могу многое. Вот перечень моих услуг:\n"
+        res['response']['text'] = ("Вот перечень моих услуг:\n"
                                    "  $ Поиск товаров (по названию/описанию/артикулу)\n"
                                    "  $ Авторизация\n"
                                    "  $ Добавление товаров в корзину\n"
